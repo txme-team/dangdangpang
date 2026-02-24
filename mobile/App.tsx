@@ -1,7 +1,8 @@
-import React, { useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, SafeAreaView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { useRef } from 'react';
+import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 
 const DEFAULT_WEB_URL = __DEV__ ? 'http://127.0.0.1:3000' : 'https://dangdangpang.vercel.app';
 const DEFAULT_IOS_REWARDED_UNIT_ID = 'ca-app-pub-9402701434542302/8971449211';
@@ -124,6 +125,21 @@ export default function App() {
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
   const webViewRef = useRef<WebView>(null);
+
+  useEffect(() => {
+    // Keep audio playback active even when iOS hardware silent switch is on.
+    Audio.setAudioModeAsync({
+      allowsRecordingIOS: false,
+      playsInSilentModeIOS: true,
+      interruptionModeIOS: InterruptionModeIOS.MixWithOthers,
+      shouldDuckAndroid: true,
+      interruptionModeAndroid: InterruptionModeAndroid.DuckOthers,
+      playThroughEarpieceAndroid: false,
+      staysActiveInBackground: false,
+    }).catch((error) => {
+      console.warn('[AudioMode] Failed to configure audio mode:', error);
+    });
+  }, []);
 
   const gameUrl = useMemo(() => {
     const envUrl = process.env.EXPO_PUBLIC_WEB_URL?.trim();

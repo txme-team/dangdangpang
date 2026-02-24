@@ -66,6 +66,30 @@ class WebSoundManager implements SoundService {
     }
   }
 
+  // iOS WebView can stay suspended for a short moment after touch.
+  // Run sound logic only when AudioContext is actually running.
+  private withRunningContext(action: (ctx: AudioContext) => void) {
+    this.ensureContext();
+    if (!this.ctx) return;
+
+    const ctx = this.ctx;
+    if (ctx.state === 'running') {
+      action(ctx);
+      return;
+    }
+
+    ctx.resume()
+      .then(() => {
+        this.resume();
+        if (ctx.state === 'running') {
+          action(ctx);
+        }
+      })
+      .catch(() => {
+        // No-op
+      });
+  }
+
   // --- Haptic Feedback Helper ---
   private vibrate(pattern: number | number[]) {
     if (typeof navigator !== 'undefined' && navigator.vibrate) {
@@ -91,116 +115,99 @@ class WebSoundManager implements SoundService {
   playSelect() {
     this.vibrate(10); 
     if (this.isMuted) return;
-    this.ensureContext();
-    if (!this.ctx) return;
-
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    
-    osc.connect(gain);
-    gain.connect(this.ctx.destination);
-    
-    osc.type = 'sine';
-    osc.frequency.setValueAtTime(800, this.ctx.currentTime);
-    osc.frequency.exponentialRampToValueAtTime(1200, this.ctx.currentTime + 0.1);
-    
-    gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.01, this.ctx.currentTime + 0.1);
-    
-    osc.start();
-    osc.stop(this.ctx.currentTime + 0.1);
+    this.withRunningContext((ctx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(800, ctx.currentTime);
+      osc.frequency.exponentialRampToValueAtTime(1200, ctx.currentTime + 0.1);
+      gain.gain.setValueAtTime(0.1, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.01, ctx.currentTime + 0.1);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.1);
+    });
   }
 
   playMatchSuccess() {
     this.vibrate([10, 30, 10]);
     if (this.isMuted) return;
-    this.ensureContext();
-    if (!this.ctx) return;
-    
-    const notes = [523.25, 659.25, 783.99, 1046.50]; // C Major
-    notes.forEach((freq, i) => {
-      if (!this.ctx) return;
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
+    this.withRunningContext((ctx) => {
+      const notes = [523.25, 659.25, 783.99, 1046.50]; // C Major
+      notes.forEach((freq, i) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
       osc.connect(gain);
-      gain.connect(this.ctx.destination);
+      gain.connect(ctx.destination);
       
       osc.type = 'triangle';
       osc.frequency.value = freq;
       
-      const startTime = this.ctx.currentTime + (i * 0.05);
+      const startTime = ctx.currentTime + (i * 0.05);
       gain.gain.setValueAtTime(0, startTime);
       gain.gain.linearRampToValueAtTime(0.1, startTime + 0.05);
       gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.3);
       
       osc.start(startTime);
       osc.stop(startTime + 0.3);
+      });
     });
   }
 
   playStoreSuccess() {
     this.vibrate([50, 50, 100]);
     if (this.isMuted) return;
-    this.ensureContext();
-    if (!this.ctx) return;
-
-    // "Coin" / Cash register sound
-    const notes = [880, 1760]; 
-    notes.forEach((freq, i) => {
-        if (!this.ctx) return;
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
+    this.withRunningContext((ctx) => {
+      // "Coin" / Cash register sound
+      const notes = [880, 1760]; 
+      notes.forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
         osc.connect(gain);
-        gain.connect(this.ctx.destination);
+        gain.connect(ctx.destination);
         osc.type = 'square';
-        osc.frequency.setValueAtTime(freq, this.ctx.currentTime + (i * 0.1));
+        osc.frequency.setValueAtTime(freq, ctx.currentTime + (i * 0.1));
         
-        const startTime = this.ctx.currentTime + (i * 0.1);
+        const startTime = ctx.currentTime + (i * 0.1);
         gain.gain.setValueAtTime(0.05, startTime);
         gain.gain.exponentialRampToValueAtTime(0.001, startTime + 0.1);
         
         osc.start(startTime);
         osc.stop(startTime + 0.1);
+      });
     });
   }
 
   playError() {
     this.vibrate([50, 50, 50]);
     if (this.isMuted) return;
-    this.ensureContext();
-    if (!this.ctx) return;
-    
-    const osc = this.ctx.createOscillator();
-    const gain = this.ctx.createGain();
-    
-    osc.connect(gain);
-    gain.connect(this.ctx.destination);
-    
-    osc.type = 'sawtooth';
-    osc.frequency.setValueAtTime(150, this.ctx.currentTime);
-    osc.frequency.linearRampToValueAtTime(100, this.ctx.currentTime + 0.2);
-    
-    gain.gain.setValueAtTime(0.1, this.ctx.currentTime);
-    gain.gain.exponentialRampToValueAtTime(0.001, this.ctx.currentTime + 0.2);
-    
-    osc.start();
-    osc.stop(this.ctx.currentTime + 0.2);
+    this.withRunningContext((ctx) => {
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
+      osc.connect(gain);
+      gain.connect(ctx.destination);
+      osc.type = 'sawtooth';
+      osc.frequency.setValueAtTime(150, ctx.currentTime);
+      osc.frequency.linearRampToValueAtTime(100, ctx.currentTime + 0.2);
+      gain.gain.setValueAtTime(0.1, ctx.currentTime);
+      gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.2);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.2);
+    });
   }
 
   playGameOver() {
     this.vibrate([60, 40, 80]);
     if (this.isMuted) return;
-    this.ensureContext();
-    if (!this.ctx) return;
-
-    const now = this.ctx.currentTime;
+    this.withRunningContext((ctx) => {
+    const now = ctx.currentTime;
     const notes = [220, 196, 174, 146];
     notes.forEach((freq, i) => {
-      if (!this.ctx) return;
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
       osc.connect(gain);
-      gain.connect(this.ctx.destination);
+      gain.connect(ctx.destination);
 
       osc.type = 'square';
       const start = now + i * 0.09;
@@ -213,47 +220,42 @@ class WebSoundManager implements SoundService {
       osc.start(start);
       osc.stop(start + 0.12);
     });
+    });
   }
 
   playLevelComplete() {
     this.vibrate([20, 30, 20, 30, 50]);
     if (this.isMuted) return;
-    this.ensureContext();
-    if (!this.ctx) return;
-    
-    const notes = [523.25, 659.25, 783.99, 1046.50, 1318.51, 1567.98]; 
-    notes.forEach((freq, i) => {
-        if (!this.ctx) return;
-        const osc = this.ctx.createOscillator();
-        const gain = this.ctx.createGain();
+    this.withRunningContext((ctx) => {
+      const notes = [523.25, 659.25, 783.99, 1046.50, 1318.51, 1567.98]; 
+      notes.forEach((freq, i) => {
+        const osc = ctx.createOscillator();
+        const gain = ctx.createGain();
         osc.connect(gain);
-        gain.connect(this.ctx.destination);
+        gain.connect(ctx.destination);
         osc.type = 'sine';
         osc.frequency.value = freq;
-        const start = this.ctx.currentTime + (i * 0.1);
+        const start = ctx.currentTime + (i * 0.1);
         gain.gain.setValueAtTime(0.1, start);
         gain.gain.linearRampToValueAtTime(0, start + 0.5);
         osc.start(start);
         osc.stop(start + 0.5);
+      });
     });
   }
 
   playEndingCelebration() {
     this.vibrate([30, 20, 30, 20, 60, 40, 60]);
     if (this.isMuted) return;
-    this.ensureContext();
-    if (!this.ctx) return;
-
-    const now = this.ctx.currentTime;
-
+    this.withRunningContext((ctx) => {
+    const now = ctx.currentTime;
     // Fanfare chord stack
     const chord = [523.25, 659.25, 783.99, 1046.5];
     chord.forEach((freq, i) => {
-      if (!this.ctx) return;
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
       osc.connect(gain);
-      gain.connect(this.ctx.destination);
+      gain.connect(ctx.destination);
       osc.type = 'triangle';
 
       const start = now + i * 0.03;
@@ -268,11 +270,10 @@ class WebSoundManager implements SoundService {
     // Clap-like bright ticks
     const clapTimes = [0.08, 0.16, 0.31, 0.44, 0.58, 0.72];
     clapTimes.forEach((t) => {
-      if (!this.ctx) return;
-      const osc = this.ctx.createOscillator();
-      const gain = this.ctx.createGain();
+      const osc = ctx.createOscillator();
+      const gain = ctx.createGain();
       osc.connect(gain);
-      gain.connect(this.ctx.destination);
+      gain.connect(ctx.destination);
       osc.type = 'square';
       osc.frequency.setValueAtTime(1800, now + t);
       osc.frequency.exponentialRampToValueAtTime(850, now + t + 0.03);
@@ -280,6 +281,7 @@ class WebSoundManager implements SoundService {
       gain.gain.exponentialRampToValueAtTime(0.001, now + t + 0.04);
       osc.start(now + t);
       osc.stop(now + t + 0.04);
+    });
     });
   }
 
