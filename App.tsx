@@ -100,6 +100,11 @@ const GameApp: React.FC = () => {
       window.removeEventListener('mousedown', unlockAudio);
       window.removeEventListener('keydown', unlockAudio);
       window.removeEventListener('click', unlockAudio);
+      document.removeEventListener('pointerdown', unlockAudio);
+      document.removeEventListener('touchstart', unlockAudio);
+      document.removeEventListener('mousedown', unlockAudio);
+      document.removeEventListener('keydown', unlockAudio);
+      document.removeEventListener('click', unlockAudio);
     };
 
     // 'touchstart' is more reliable than 'click' on iOS for audio unlocking
@@ -108,6 +113,11 @@ const GameApp: React.FC = () => {
     window.addEventListener('mousedown', unlockAudio);
     window.addEventListener('keydown', unlockAudio);
     window.addEventListener('click', unlockAudio);
+    document.addEventListener('pointerdown', unlockAudio, { passive: true });
+    document.addEventListener('touchstart', unlockAudio);
+    document.addEventListener('mousedown', unlockAudio);
+    document.addEventListener('keydown', unlockAudio);
+    document.addEventListener('click', unlockAudio);
 
     return () => {
       window.removeEventListener('pointerdown', unlockAudio);
@@ -115,6 +125,11 @@ const GameApp: React.FC = () => {
       window.removeEventListener('mousedown', unlockAudio);
       window.removeEventListener('keydown', unlockAudio);
       window.removeEventListener('click', unlockAudio);
+      document.removeEventListener('pointerdown', unlockAudio);
+      document.removeEventListener('touchstart', unlockAudio);
+      document.removeEventListener('mousedown', unlockAudio);
+      document.removeEventListener('keydown', unlockAudio);
+      document.removeEventListener('click', unlockAudio);
     };
   }, [sound]);
 

@@ -12,7 +12,11 @@
       "distribution": "internal"
     },
     "production": {
-      "autoIncrement": true
+      "autoIncrement": true,
+      "env": {
+        "EXPO_PUBLIC_ADMOB_REWARDED_IOS": "ca-app-pub-9402701434542302/8971449211",
+        "EXPO_PUBLIC_ADMOB_REWARDED_ANDROID": "ca-app-pub-3940256099942544/5224354917"
+      }
     }
   },
   "submit": {

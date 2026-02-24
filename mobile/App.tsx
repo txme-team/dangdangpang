@@ -4,6 +4,8 @@ import { WebView, type WebViewMessageEvent } from 'react-native-webview';
 import { useRef } from 'react';
 
 const DEFAULT_WEB_URL = __DEV__ ? 'http://127.0.0.1:3000' : 'https://dangdangpang.vercel.app';
+const DEFAULT_IOS_REWARDED_UNIT_ID = 'ca-app-pub-9402701434542302/8971449211';
+const DEFAULT_ANDROID_REWARDED_UNIT_ID = 'ca-app-pub-3940256099942544/5224354917';
 
 type AdBridgePayload = {
   source: 'dangdangpang';
@@ -37,12 +39,15 @@ const parseBridgePayload = (raw: string): AdBridgePayload | null => {
 const getRewardedAdUnitId = (): string => {
   if (!adsModule) return '';
   const { TestIds } = adsModule;
-  if (__DEV__) return TestIds.REWARDED;
 
   const iosUnit = process.env.EXPO_PUBLIC_ADMOB_REWARDED_IOS?.trim();
   const androidUnit = process.env.EXPO_PUBLIC_ADMOB_REWARDED_ANDROID?.trim();
-  if (Platform.OS === 'ios') return iosUnit && iosUnit.length > 0 ? iosUnit : TestIds.REWARDED;
-  return androidUnit && androidUnit.length > 0 ? androidUnit : TestIds.REWARDED;
+  if (Platform.OS === 'ios') {
+    if (iosUnit && iosUnit.length > 0) return iosUnit;
+    return __DEV__ ? TestIds.REWARDED : DEFAULT_IOS_REWARDED_UNIT_ID;
+  }
+  if (androidUnit && androidUnit.length > 0) return androidUnit;
+  return __DEV__ ? TestIds.REWARDED : DEFAULT_ANDROID_REWARDED_UNIT_ID;
 };
 
 const showNativeRewardedAd = async (): Promise<boolean> => {
