@@ -14,7 +14,10 @@
     },
     "ios": {
       "supportsTablet": false,
-      "bundleIdentifier": "com.txme.dangdangpang"
+      "bundleIdentifier": "com.txme.dangdangpang",
+      "infoPlist": {
+        "ITSAppUsesNonExemptEncryption": false
+      }
     },
     "android": {
       "adaptiveIcon": {
@@ -29,7 +32,10 @@
       "favicon": "./assets/favicon.png"
     },
     "extra": {
-      "webUrl": "https://dangdangpang.vercel.app"
+      "webUrl": "https://dangdangpang.vercel.app",
+      "eas": {
+        "projectId": "4d110191-addf-46d0-b816-3592e37c7723"
+      }
     },
     "plugins": [
       [
