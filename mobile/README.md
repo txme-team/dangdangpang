@@ -8,6 +8,7 @@
 ## Run
 ```bash
 cd /Users/doyoulovez/Documents/dangdangpang/mobile
+nvm use
 npm install
 npm run start
 ```
@@ -15,11 +16,24 @@ npm run start
 ## Simulator
 ```bash
 # iOS Simulator (macOS + Xcode)
+nvm use
 npm run ios
 
 # Android Emulator
+nvm use
 npm run android
 ```
+
+## Prerequisites for Simulator
+- iOS: install full Xcode from App Store, then run:
+```bash
+sudo xcode-select -s /Applications/Xcode.app/Contents/Developer
+sudo xcodebuild -runFirstLaunch
+```
+- Android: install Android Studio + SDK + Emulator, create at least one AVD.
+
+Node note:
+- This project is pinned to Node 20 (`.nvmrc`) for Expo stability.
 
 ## Set custom web URL
 ```bash
