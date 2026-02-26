@@ -1,16 +1,41 @@
-import React, { useEffect, useMemo, useState } from 'react';
+import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { ActivityIndicator, Platform, Pressable, SafeAreaView, StatusBar, StyleSheet, Text, View } from 'react-native';
 import { WebView, type WebViewMessageEvent } from 'react-native-webview';
-import { useRef } from 'react';
 import { Audio, InterruptionModeAndroid, InterruptionModeIOS } from 'expo-av';
 
 const DEFAULT_WEB_URL = __DEV__ ? 'http://127.0.0.1:3000' : 'https://dangdangpang.vercel.app';
 const DEFAULT_IOS_REWARDED_UNIT_ID = 'ca-app-pub-9402701434542302/8971449211';
 const DEFAULT_ANDROID_REWARDED_UNIT_ID = 'ca-app-pub-3940256099942544/5224354917';
+const FORCE_TEST_REWARDED = process.env.EXPO_PUBLIC_ADMOB_FORCE_TEST === 'true';
+const FORCE_LIVE_REWARDED = process.env.EXPO_PUBLIC_ADMOB_FORCE_LIVE === 'true';
+const ALLOW_TEST_FALLBACK = process.env.EXPO_PUBLIC_ADMOB_ALLOW_TEST_FALLBACK !== 'false';
+const BRIDGE_LOG_PREFIX = '[DangdangpangBridge]';
+const AUDIO_LOG_PREFIX = '[DangdangpangAudio]';
 
-type AdBridgePayload = {
+type NativeSoundName =
+  | 'select'
+  | 'match'
+  | 'store'
+  | 'error'
+  | 'gameover'
+  | 'levelcomplete'
+  | 'ending';
+
+type ShowRewardedAdPayload = {
   source: 'dangdangpang';
-  type: 'SHOW_REWARDED_AD' | 'REWARDED_AD_RESULT';
+  type: 'SHOW_REWARDED_AD';
+  requestId: string;
+};
+
+type PlaySoundPayload = {
+  source: 'dangdangpang';
+  type: 'PLAY_SOUND';
+  sound: NativeSoundName;
+};
+
+type RewardedAdResultPayload = {
+  source: 'dangdangpang';
+  type: 'REWARDED_AD_RESULT';
   requestId: string;
   rewarded?: boolean;
   error?: string;
@@ -26,13 +51,43 @@ try {
   adsModule = null;
 }
 
-const parseBridgePayload = (raw: string): AdBridgePayload | null => {
+const SOUND_ASSETS: Record<NativeSoundName, number> = {
+  select: require('./assets/sfx/select.wav'),
+  match: require('./assets/sfx/match.wav'),
+  store: require('./assets/sfx/store.wav'),
+  error: require('./assets/sfx/error.wav'),
+  gameover: require('./assets/sfx/gameover.wav'),
+  levelcomplete: require('./assets/sfx/levelcomplete.wav'),
+  ending: require('./assets/sfx/ending.wav'),
+};
+
+const isNativeSoundName = (value: unknown): value is NativeSoundName => {
+  return (
+    value === 'select' ||
+    value === 'match' ||
+    value === 'store' ||
+    value === 'error' ||
+    value === 'gameover' ||
+    value === 'levelcomplete' ||
+    value === 'ending'
+  );
+};
+
+const parseBridgePayload = (raw: string): ShowRewardedAdPayload | PlaySoundPayload | null => {
   try {
-    const data = JSON.parse(raw);
+    const data = JSON.parse(raw) as Record<string, unknown>;
     if (!data || data.source !== 'dangdangpang') return null;
-    if (!data.type || !data.requestId) return null;
-    return data as AdBridgePayload;
+    if (data.type === 'SHOW_REWARDED_AD') {
+      if (typeof data.requestId !== 'string' || data.requestId.length === 0) return null;
+      return data as unknown as ShowRewardedAdPayload;
+    }
+    if (data.type === 'PLAY_SOUND') {
+      if (!isNativeSoundName(data.sound)) return null;
+      return data as unknown as PlaySoundPayload;
+    }
+    return null;
   } catch {
+    console.warn(`${BRIDGE_LOG_PREFIX} Failed to parse message`, raw?.slice?.(0, 160) ?? raw);
     return null;
   }
 };
@@ -40,9 +95,16 @@ const parseBridgePayload = (raw: string): AdBridgePayload | null => {
 const getRewardedAdUnitId = (): string => {
   if (!adsModule) return '';
   const { TestIds } = adsModule;
+  if (FORCE_TEST_REWARDED) return TestIds.REWARDED;
 
   const iosUnit = process.env.EXPO_PUBLIC_ADMOB_REWARDED_IOS?.trim();
   const androidUnit = process.env.EXPO_PUBLIC_ADMOB_REWARDED_ANDROID?.trim();
+
+  if (FORCE_LIVE_REWARDED) {
+    if (Platform.OS === 'ios') return iosUnit && iosUnit.length > 0 ? iosUnit : DEFAULT_IOS_REWARDED_UNIT_ID;
+    return androidUnit && androidUnit.length > 0 ? androidUnit : DEFAULT_ANDROID_REWARDED_UNIT_ID;
+  }
+
   if (Platform.OS === 'ios') {
     if (iosUnit && iosUnit.length > 0) return iosUnit;
     return __DEV__ ? TestIds.REWARDED : DEFAULT_IOS_REWARDED_UNIT_ID;
@@ -51,12 +113,10 @@ const getRewardedAdUnitId = (): string => {
   return __DEV__ ? TestIds.REWARDED : DEFAULT_ANDROID_REWARDED_UNIT_ID;
 };
 
-const showNativeRewardedAd = async (): Promise<boolean> => {
+const runRewardedAdAttempt = async (unitId: string): Promise<boolean> => {
   if (!adsModule) return false;
-  const { MobileAds, RewardedAd, RewardedAdEventType, AdEventType } = adsModule;
+  const { RewardedAd, RewardedAdEventType, AdEventType } = adsModule;
 
-  await MobileAds().initialize();
-  const unitId = getRewardedAdUnitId();
   const ad = RewardedAd.createForAdRequest(unitId, {
     requestNonPersonalizedAdsOnly: true,
   });
@@ -79,11 +139,12 @@ const showNativeRewardedAd = async (): Promise<boolean> => {
     };
 
     const unsubLoaded = ad.addAdEventListener(RewardedAdEventType.LOADED, () => {
-      ad.show()
-        .then(() => {
-          adShown = true;
-        })
-        .catch(() => settle(false));
+      try {
+        ad.show();
+        adShown = true;
+      } catch {
+        settle(false);
+      }
     });
 
     const unsubEarned = ad.addAdEventListener(RewardedAdEventType.EARNED_REWARD, () => {
@@ -120,11 +181,27 @@ const showNativeRewardedAd = async (): Promise<boolean> => {
   });
 };
 
+const showNativeRewardedAd = async (): Promise<boolean> => {
+  if (!adsModule) return false;
+  const { MobileAds, TestIds } = adsModule;
+  await MobileAds().initialize();
+
+  const primaryUnitId = getRewardedAdUnitId();
+  const rewarded = await runRewardedAdAttempt(primaryUnitId);
+  if (rewarded) return true;
+
+  if (!ALLOW_TEST_FALLBACK || FORCE_LIVE_REWARDED || primaryUnitId === TestIds.REWARDED) return false;
+
+  console.warn('[AdMob] Primary rewarded ad failed. Retrying with TestIds.REWARDED');
+  return await runRewardedAdAttempt(TestIds.REWARDED);
+};
+
 export default function App() {
   const [reloadKey, setReloadKey] = useState(0);
   const [isLoading, setIsLoading] = useState(true);
   const [hasError, setHasError] = useState(false);
   const webViewRef = useRef<WebView>(null);
+  const nativeSoundsRef = useRef<Partial<Record<NativeSoundName, Audio.Sound>>>({});
 
   useEffect(() => {
     // Keep audio playback active even when iOS hardware silent switch is on.
@@ -139,6 +216,40 @@ export default function App() {
     }).catch((error) => {
       console.warn('[AudioMode] Failed to configure audio mode:', error);
     });
+
+    let isMounted = true;
+    const preloadNativeSounds = async () => {
+      const loaded: Partial<Record<NativeSoundName, Audio.Sound>> = {};
+      try {
+        for (const soundName of Object.keys(SOUND_ASSETS) as NativeSoundName[]) {
+          console.log(`${AUDIO_LOG_PREFIX} preload start`, soundName);
+          const { sound } = await Audio.Sound.createAsync(SOUND_ASSETS[soundName], {
+            shouldPlay: false,
+            volume: 1,
+            isMuted: false,
+          });
+          loaded[soundName] = sound;
+          console.log(`${AUDIO_LOG_PREFIX} preload success`, soundName);
+        }
+        if (isMounted) {
+          nativeSoundsRef.current = loaded;
+          console.log(`${AUDIO_LOG_PREFIX} preload completed`, Object.keys(loaded).join(', '));
+        } else {
+          await Promise.all(Object.values(loaded).map((sound) => sound?.unloadAsync()));
+        }
+      } catch (error) {
+        console.warn(`${AUDIO_LOG_PREFIX} preload failed:`, error);
+      }
+    };
+
+    void preloadNativeSounds();
+
+    return () => {
+      isMounted = false;
+      const sounds = nativeSoundsRef.current;
+      nativeSoundsRef.current = {};
+      void Promise.all(Object.values(sounds).map((sound) => sound?.unloadAsync()));
+    };
   }, []);
 
   const gameUrl = useMemo(() => {
@@ -152,7 +263,22 @@ export default function App() {
     setReloadKey((prev) => prev + 1);
   };
 
-  const postRewardResult = (payload: AdBridgePayload) => {
+  const playNativeSound = async (soundName: NativeSoundName) => {
+    console.log(`${AUDIO_LOG_PREFIX} replay request`, soundName);
+    const sound = nativeSoundsRef.current[soundName];
+    if (!sound) {
+      console.warn(`${AUDIO_LOG_PREFIX} replay skipped - not preloaded`, soundName);
+      return;
+    }
+    try {
+      await sound.replayAsync();
+      console.log(`${AUDIO_LOG_PREFIX} replay success`, soundName);
+    } catch (error) {
+      console.warn(`${AUDIO_LOG_PREFIX} replay failed ${soundName}:`, error);
+    }
+  };
+
+  const postRewardResult = (payload: RewardedAdResultPayload) => {
     const data = JSON.stringify(payload);
     const js = `
       (function() {
@@ -167,8 +293,18 @@ export default function App() {
   };
 
   const onWebViewMessage = async (event: WebViewMessageEvent) => {
+    console.log(`${BRIDGE_LOG_PREFIX} onMessage raw`, event.nativeEvent.data?.slice?.(0, 220) ?? event.nativeEvent.data);
     const payload = parseBridgePayload(event.nativeEvent.data);
-    if (!payload || payload.type !== 'SHOW_REWARDED_AD') return;
+    if (!payload) {
+      console.warn(`${BRIDGE_LOG_PREFIX} payload ignored`);
+      return;
+    }
+    console.log(`${BRIDGE_LOG_PREFIX} payload`, payload.type, payload);
+
+    if (payload.type === 'PLAY_SOUND') {
+      await playNativeSound(payload.sound);
+      return;
+    }
 
     let rewarded = false;
     let error = '';

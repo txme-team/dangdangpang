@@ -1,5 +1,23 @@
 
-import { SoundService } from '../services/contracts';
+import { SoundDebugState, SoundService } from '../services/contracts';
+
+declare global {
+  interface Window {
+    ReactNativeWebView?: {
+      postMessage?: (data: string) => void;
+    };
+    __DANGDANG_SOUND_DEBUG__?: SoundDebugState;
+  }
+}
+
+type NativeSoundEvent =
+  | 'select'
+  | 'match'
+  | 'store'
+  | 'error'
+  | 'gameover'
+  | 'levelcomplete'
+  | 'ending';
 
 // A simple web-audio synth implementation.
 class WebSoundManager implements SoundService {
@@ -9,66 +27,218 @@ class WebSoundManager implements SoundService {
   private bgmGain: GainNode | null = null;
   private isBgmPlaying: boolean = false;
   private didUnlock: boolean = false;
+  private isRNWebView: boolean;
+  private debug: SoundDebugState;
 
   constructor() {
-    // Intentionally empty.
+    this.isRNWebView = this.detectRNWebView();
+    this.debug = {
+      mode: this.isRNWebView ? 'rn-bridge' : 'web-audio',
+      contextState: 'none',
+      unlocked: false,
+      lastResume: null,
+      lastError: null,
+    };
+    this.publishDebug();
+    this.attachLifecycleResumeHandlers();
   }
 
   // Call this on the FIRST user interaction (e.g. Game Start button or Touch)
   // This is critical for iOS Safari to unlock audio.
   init() {
-    if (!this.ctx) {
-      try {
-        const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
-        if (AudioContextClass) {
-          this.ctx = new AudioContextClass({ latencyHint: 'interactive' } as AudioContextOptions);
-        }
-      } catch (e) {
-        console.error("Web Audio API not supported", e);
-      }
-    }
-
-    this.resume();
+    if (this.isRNWebView) return;
+    this.forceUnlockFromUserGesture('init');
   }
 
   // Helper to force resume context (iOS Safari fix)
   resume() {
-    if (this.ctx) {
-        // 1. Resume context if suspended
-        if (this.ctx.state === 'suspended') {
-            this.ctx.resume().catch(() => {});
-        }
-
-        // 2. iOS Unlock Trick: Play a short silent buffer
-        // This forces the audio hardware to wake up immediately within the interaction event.
-        if (!this.didUnlock) {
-          try {
-              const buffer = this.ctx.createBuffer(1, 1, 22050);
-              const source = this.ctx.createBufferSource();
-              source.buffer = buffer;
-              source.connect(this.ctx.destination);
-              source.start(0);
-              this.didUnlock = true;
-          } catch {
-              // Ignore errors here
-          }
-        }
+    if (this.isRNWebView) return;
+    if (!this.ctx) {
+      this.createAudioContext();
     }
+    if (!this.ctx) {
+      this.updateDebug({ contextState: 'none' });
+      return;
+    }
+    this.resumeContext('manual-resume');
   }
 
   private ensureContext() {
-    // Just a fallback, but init() should be called explicitly first via user interaction.
-    if (!this.ctx) {
-        this.init();
-    } else {
-        // Always try to resume if suspended
-        this.resume();
+    if (this.isRNWebView) return;
+    this.createAudioContext();
+    this.resume();
+  }
+
+  private detectRNWebView() {
+    return typeof window !== 'undefined' && typeof window.ReactNativeWebView?.postMessage === 'function';
+  }
+
+  private isReactNativeWebView() {
+    return this.isRNWebView;
+  }
+
+  private sendNativeSound(event: NativeSoundEvent) {
+    if (!this.isReactNativeWebView()) return;
+    try {
+      window.ReactNativeWebView!.postMessage!(
+        JSON.stringify({
+          source: 'dangdangpang',
+          type: 'PLAY_SOUND',
+          sound: event,
+          ts: Date.now(),
+        })
+      );
+    } catch {
+      // No-op
     }
+  }
+
+  private createAudioContext() {
+    if (this.isRNWebView || this.ctx) return this.ctx;
+    try {
+      const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+      if (!AudioContextClass) {
+        this.updateDebug({ lastError: 'AudioContext unavailable', contextState: 'none' });
+        return null;
+      }
+      this.ctx = new AudioContextClass({ latencyHint: 'interactive' } as AudioContextOptions);
+      this.updateDebug({
+        contextState: this.ctx.state,
+        lastError: null,
+      });
+      return this.ctx;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.updateDebug({ lastError: `AudioContext create failed: ${message}`, contextState: 'none' });
+      return null;
+    }
+  }
+
+  private resumeContext(reason: string) {
+    if (!this.ctx) return;
+    this.updateDebug({ contextState: this.ctx.state });
+    if (this.ctx.state === 'running') {
+      this.updateDebug({
+        unlocked: this.didUnlock,
+        lastResume: { ok: true, at: Date.now(), reason },
+        lastError: null,
+      });
+      return;
+    }
+    try {
+      const resumePromise = this.ctx.resume();
+      void resumePromise
+        .then(() => {
+          this.updateDebug({
+            contextState: this.ctx?.state ?? 'none',
+            lastResume: { ok: true, at: Date.now(), reason },
+            lastError: null,
+          });
+        })
+        .catch((error) => {
+          const message = error instanceof Error ? error.message : String(error);
+          this.updateDebug({
+            contextState: this.ctx?.state ?? 'none',
+            lastResume: { ok: false, at: Date.now(), reason, error: message },
+            lastError: `resume failed: ${message}`,
+          });
+        });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.updateDebug({
+        contextState: this.ctx?.state ?? 'none',
+        lastResume: { ok: false, at: Date.now(), reason, error: message },
+        lastError: `resume throw: ${message}`,
+      });
+    }
+  }
+
+  forceUnlockFromUserGesture(reason = 'gesture') {
+    if (this.isRNWebView) return;
+    const ctx = this.createAudioContext();
+    if (!ctx) return;
+
+    // Keep resume call in the same user gesture stack (do not await here).
+    this.resumeContext(`unlock:${reason}`);
+
+    // Gesture-stack unlock pulse: very short near-silent oscillator + silent buffer.
+    try {
+      const gain = ctx.createGain();
+      gain.gain.value = 0.0001;
+      gain.connect(ctx.destination);
+
+      const osc = ctx.createOscillator();
+      osc.type = 'sine';
+      osc.frequency.setValueAtTime(880, ctx.currentTime);
+      osc.connect(gain);
+      osc.start();
+      osc.stop(ctx.currentTime + 0.01);
+
+      const buffer = ctx.createBuffer(1, 128, 22050);
+      const source = ctx.createBufferSource();
+      source.buffer = buffer;
+      source.connect(ctx.destination);
+      source.start(0);
+
+      this.didUnlock = true;
+      this.updateDebug({
+        unlocked: true,
+        contextState: ctx.state,
+        lastError: null,
+      });
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.updateDebug({
+        contextState: ctx.state,
+        lastError: `unlock pulse failed: ${message}`,
+      });
+    }
+  }
+
+  getDebugState() {
+    return { ...this.debug };
+  }
+
+  private updateDebug(partial: Partial<SoundDebugState>) {
+    this.debug = { ...this.debug, ...partial };
+    this.publishDebug();
+  }
+
+  private publishDebug() {
+    if (typeof window === 'undefined') return;
+    window.__DANGDANG_SOUND_DEBUG__ = { ...this.debug };
+    window.dispatchEvent(new CustomEvent('dangdang:sound-debug', { detail: { ...this.debug } }));
+  }
+
+  private attachLifecycleResumeHandlers() {
+    if (typeof window === 'undefined' || this.isRNWebView) return;
+
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        this.resumeContext('visibilitychange');
+      }
+    };
+    const onPageShow = () => this.resumeContext('pageshow');
+    const onFocus = () => this.resumeContext('focus');
+    const onPageHide = () => {
+      this.updateDebug({ contextState: this.ctx?.state ?? 'none' });
+      setTimeout(() => {
+        if (document.visibilityState === 'visible') {
+          this.resumeContext('pagehide-recovery');
+        }
+      }, 120);
+    };
+
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('pageshow', onPageShow);
+    window.addEventListener('focus', onFocus);
+    window.addEventListener('pagehide', onPageHide);
   }
 
   // iOS WebView can stay suspended for a short moment after touch.
   // Run sound logic only when AudioContext is actually running.
   private withRunningContext(action: (ctx: AudioContext) => void) {
+    if (this.isRNWebView) return;
     this.ensureContext();
     if (!this.ctx) return;
 
@@ -78,16 +248,25 @@ class WebSoundManager implements SoundService {
       return;
     }
 
-    ctx.resume()
-      .then(() => {
-        this.resume();
-        if (ctx.state === 'running') {
-          action(ctx);
-        }
-      })
-      .catch(() => {
-        // No-op
-      });
+    // Important for iOS WebView:
+    // attempt resume inside the same user gesture call, then run action immediately.
+    // If resume settles slightly later, fire one retry.
+    try {
+      const resumePromise = ctx.resume();
+      action(ctx);
+      resumePromise
+        .then(() => {
+          this.resume();
+          if (ctx.state === 'running') {
+            action(ctx);
+          }
+        })
+        .catch(() => {
+          // No-op
+        });
+    } catch {
+      action(ctx);
+    }
   }
 
   // --- Haptic Feedback Helper ---
@@ -102,7 +281,9 @@ class WebSoundManager implements SoundService {
   }
 
   toggleMute() {
-    this.ensureContext(); // Ensure context exists when toggling
+    if (!this.isRNWebView) {
+      this.ensureContext();
+    }
     this.isMuted = !this.isMuted;
     if (this.isMuted) {
       this.stopBGM();
@@ -115,6 +296,10 @@ class WebSoundManager implements SoundService {
   playSelect() {
     this.vibrate(10); 
     if (this.isMuted) return;
+    if (this.isReactNativeWebView()) {
+      this.sendNativeSound('select');
+      return;
+    }
     this.withRunningContext((ctx) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -133,6 +318,10 @@ class WebSoundManager implements SoundService {
   playMatchSuccess() {
     this.vibrate([10, 30, 10]);
     if (this.isMuted) return;
+    if (this.isReactNativeWebView()) {
+      this.sendNativeSound('match');
+      return;
+    }
     this.withRunningContext((ctx) => {
       const notes = [523.25, 659.25, 783.99, 1046.50]; // C Major
       notes.forEach((freq, i) => {
@@ -158,6 +347,10 @@ class WebSoundManager implements SoundService {
   playStoreSuccess() {
     this.vibrate([50, 50, 100]);
     if (this.isMuted) return;
+    if (this.isReactNativeWebView()) {
+      this.sendNativeSound('store');
+      return;
+    }
     this.withRunningContext((ctx) => {
       // "Coin" / Cash register sound
       const notes = [880, 1760]; 
@@ -182,6 +375,10 @@ class WebSoundManager implements SoundService {
   playError() {
     this.vibrate([50, 50, 50]);
     if (this.isMuted) return;
+    if (this.isReactNativeWebView()) {
+      this.sendNativeSound('error');
+      return;
+    }
     this.withRunningContext((ctx) => {
       const osc = ctx.createOscillator();
       const gain = ctx.createGain();
@@ -200,6 +397,10 @@ class WebSoundManager implements SoundService {
   playGameOver() {
     this.vibrate([60, 40, 80]);
     if (this.isMuted) return;
+    if (this.isReactNativeWebView()) {
+      this.sendNativeSound('gameover');
+      return;
+    }
     this.withRunningContext((ctx) => {
     const now = ctx.currentTime;
     const notes = [220, 196, 174, 146];
@@ -226,6 +427,10 @@ class WebSoundManager implements SoundService {
   playLevelComplete() {
     this.vibrate([20, 30, 20, 30, 50]);
     if (this.isMuted) return;
+    if (this.isReactNativeWebView()) {
+      this.sendNativeSound('levelcomplete');
+      return;
+    }
     this.withRunningContext((ctx) => {
       const notes = [523.25, 659.25, 783.99, 1046.50, 1318.51, 1567.98]; 
       notes.forEach((freq, i) => {
@@ -247,6 +452,10 @@ class WebSoundManager implements SoundService {
   playEndingCelebration() {
     this.vibrate([30, 20, 30, 20, 60, 40, 60]);
     if (this.isMuted) return;
+    if (this.isReactNativeWebView()) {
+      this.sendNativeSound('ending');
+      return;
+    }
     this.withRunningContext((ctx) => {
     const now = ctx.currentTime;
     // Fanfare chord stack
@@ -287,6 +496,7 @@ class WebSoundManager implements SoundService {
 
   playBGM() {
     if (this.isMuted || this.isBgmPlaying) return;
+    if (this.isRNWebView) return;
     this.ensureContext();
     if (!this.ctx) return;
     

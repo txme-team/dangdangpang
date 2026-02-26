@@ -3,6 +3,7 @@ import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { createBoard, findPath, hasPossibleMoves, shuffleBoard, findAvailableMatch } from './utils/gameLogic';
 import { evaluateMatchReward, shouldRunGameTimer } from './utils/gameSession';
 import { platformServices } from './services/platformServices';
+import type { SoundDebugState } from './services/contracts';
 import { AuthProvider, useAuth } from './contexts/AuthContext'; 
 import LoginScreen from './components/LoginScreen'; 
 import AppErrorBoundary from './components/AppErrorBoundary';
@@ -92,44 +93,67 @@ const GameApp: React.FC = () => {
   // Attaches a one-time listener to the window to unlock audio on the very first touch anywhere.
   useEffect(() => {
     if (typeof window === 'undefined') return;
-    const unlockAudio = () => {
+    const tryUnlock = () => {
+      // Keep all unlock work in the user gesture call stack.
+      sound.forceUnlockFromUserGesture?.('global-pointer');
       sound.init();
-      // Remove after first interaction
-      window.removeEventListener('pointerdown', unlockAudio);
-      window.removeEventListener('touchstart', unlockAudio);
-      window.removeEventListener('mousedown', unlockAudio);
-      window.removeEventListener('keydown', unlockAudio);
-      window.removeEventListener('click', unlockAudio);
-      document.removeEventListener('pointerdown', unlockAudio);
-      document.removeEventListener('touchstart', unlockAudio);
-      document.removeEventListener('mousedown', unlockAudio);
-      document.removeEventListener('keydown', unlockAudio);
-      document.removeEventListener('click', unlockAudio);
+
+      const debug = sound.getDebugState?.();
+      if (!debug?.unlocked) return;
+      window.removeEventListener('pointerdown', tryUnlock);
+      window.removeEventListener('touchstart', tryUnlock);
+      window.removeEventListener('mousedown', tryUnlock);
+      window.removeEventListener('keydown', tryUnlock);
+      window.removeEventListener('click', tryUnlock);
+      document.removeEventListener('pointerdown', tryUnlock);
+      document.removeEventListener('touchstart', tryUnlock);
+      document.removeEventListener('mousedown', tryUnlock);
+      document.removeEventListener('keydown', tryUnlock);
+      document.removeEventListener('click', tryUnlock);
     };
 
-    // 'touchstart' is more reliable than 'click' on iOS for audio unlocking
-    window.addEventListener('pointerdown', unlockAudio, { passive: true });
-    window.addEventListener('touchstart', unlockAudio);
-    window.addEventListener('mousedown', unlockAudio);
-    window.addEventListener('keydown', unlockAudio);
-    window.addEventListener('click', unlockAudio);
-    document.addEventListener('pointerdown', unlockAudio, { passive: true });
-    document.addEventListener('touchstart', unlockAudio);
-    document.addEventListener('mousedown', unlockAudio);
-    document.addEventListener('keydown', unlockAudio);
-    document.addEventListener('click', unlockAudio);
+    window.addEventListener('pointerdown', tryUnlock, { passive: true });
+    window.addEventListener('touchstart', tryUnlock, { passive: true });
+    window.addEventListener('mousedown', tryUnlock);
+    window.addEventListener('keydown', tryUnlock);
+    window.addEventListener('click', tryUnlock);
+    document.addEventListener('pointerdown', tryUnlock, { passive: true });
+    document.addEventListener('touchstart', tryUnlock, { passive: true });
+    document.addEventListener('mousedown', tryUnlock);
+    document.addEventListener('keydown', tryUnlock);
+    document.addEventListener('click', tryUnlock);
 
     return () => {
-      window.removeEventListener('pointerdown', unlockAudio);
-      window.removeEventListener('touchstart', unlockAudio);
-      window.removeEventListener('mousedown', unlockAudio);
-      window.removeEventListener('keydown', unlockAudio);
-      window.removeEventListener('click', unlockAudio);
-      document.removeEventListener('pointerdown', unlockAudio);
-      document.removeEventListener('touchstart', unlockAudio);
-      document.removeEventListener('mousedown', unlockAudio);
-      document.removeEventListener('keydown', unlockAudio);
-      document.removeEventListener('click', unlockAudio);
+      window.removeEventListener('pointerdown', tryUnlock);
+      window.removeEventListener('touchstart', tryUnlock);
+      window.removeEventListener('mousedown', tryUnlock);
+      window.removeEventListener('keydown', tryUnlock);
+      window.removeEventListener('click', tryUnlock);
+      document.removeEventListener('pointerdown', tryUnlock);
+      document.removeEventListener('touchstart', tryUnlock);
+      document.removeEventListener('mousedown', tryUnlock);
+      document.removeEventListener('keydown', tryUnlock);
+      document.removeEventListener('click', tryUnlock);
+    };
+  }, [sound]);
+
+  useEffect(() => {
+    if (typeof document === 'undefined' || typeof window === 'undefined') return;
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') {
+        sound.resume();
+      }
+    };
+    const onPageShow = () => sound.resume();
+    const onFocus = () => sound.resume();
+
+    document.addEventListener('visibilitychange', onVisible);
+    window.addEventListener('pageshow', onPageShow);
+    window.addEventListener('focus', onFocus);
+    return () => {
+      document.removeEventListener('visibilitychange', onVisible);
+      window.removeEventListener('pageshow', onPageShow);
+      window.removeEventListener('focus', onFocus);
     };
   }, [sound]);
 
@@ -663,15 +687,78 @@ const AuthConsumer: React.FC = () => {
         return (
              <div className="h-screen w-screen bg-retro-stripe flex items-center justify-center">
                  <div className="text-xl font-bold text-[#fff2c6] animate-bounce" style={{ textShadow: '2px 2px 0 #1a2242' }}>LOADING...</div>
+                 <SoundDebugOverlay />
              </div>
         );
     }
 
     if (!user) {
-        return <LoginScreen />;
+        return (
+          <>
+            <LoginScreen />
+            <SoundDebugOverlay />
+          </>
+        );
     }
 
-    return <GameApp />;
+    return (
+      <>
+        <GameApp />
+        <SoundDebugOverlay />
+      </>
+    );
 }
+
+const SoundDebugOverlay: React.FC = () => {
+  const [debugState, setDebugState] = useState<SoundDebugState | null>(null);
+  const [isMobileLike, setIsMobileLike] = useState(false);
+
+  useEffect(() => {
+    if (typeof window === 'undefined') return;
+
+    const updateViewport = () => {
+      const coarse = window.matchMedia?.('(pointer: coarse)').matches ?? false;
+      setIsMobileLike(coarse || window.innerWidth <= 900);
+    };
+    updateViewport();
+    window.addEventListener('resize', updateViewport);
+
+    const sound = platformServices.sound;
+    const apply = (state?: SoundDebugState | null) => {
+      setDebugState(state ?? sound.getDebugState?.() ?? null);
+    };
+    apply();
+
+    const onDebug = (event: Event) => {
+      const custom = event as CustomEvent<SoundDebugState>;
+      apply(custom.detail);
+    };
+    window.addEventListener('dangdang:sound-debug', onDebug as EventListener);
+    const poll = window.setInterval(() => apply(), 1200);
+
+    return () => {
+      window.removeEventListener('resize', updateViewport);
+      window.removeEventListener('dangdang:sound-debug', onDebug as EventListener);
+      window.clearInterval(poll);
+    };
+  }, []);
+
+  if (!isMobileLike || !debugState) return null;
+
+  const when = debugState.lastResume ? new Date(debugState.lastResume.at).toLocaleTimeString() : '-';
+  const resumeStatus = debugState.lastResume
+    ? `${debugState.lastResume.ok ? 'ok' : 'fail'} (${debugState.lastResume.reason}) @ ${when}`
+    : 'n/a';
+
+  return (
+    <div className="fixed left-1.5 bottom-1.5 z-[200] pointer-events-none bg-black/70 text-[#d8f0ff] text-[10px] leading-tight px-2 py-1.5 rounded max-w-[90vw]">
+      <div>AUDIO {debugState.mode}</div>
+      <div>state: {debugState.contextState}</div>
+      <div>unlock: {debugState.unlocked ? 'yes' : 'no'}</div>
+      <div>resume: {resumeStatus}</div>
+      <div>err: {debugState.lastError ?? 'none'}</div>
+    </div>
+  );
+};
 
 export default App;

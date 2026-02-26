@@ -1,8 +1,23 @@
 import { RankingEntry } from '../types';
 
+export type SoundDebugState = {
+  mode: 'web-audio' | 'rn-bridge';
+  contextState: AudioContextState | 'none';
+  unlocked: boolean;
+  lastResume: {
+    ok: boolean;
+    at: number;
+    reason: string;
+    error?: string;
+  } | null;
+  lastError: string | null;
+};
+
 export interface SoundService {
   init: () => void;
   resume: () => void;
+  forceUnlockFromUserGesture?: (reason?: string) => void;
+  getDebugState?: () => SoundDebugState;
   toggleMute: () => boolean;
   playSelect: () => void;
   playMatchSuccess: () => void;

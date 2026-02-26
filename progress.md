@@ -125,3 +125,21 @@ Original prompt: 내가 이전에 개발하던 게임이 있는데 그걸 이어
   - `npm run build` passed.
   - Dev server running at `http://localhost:3000/` and `http://192.168.219.101:3000/`.
   - Playwright skill client attempt failed because `playwright` package is not installed in current environment.
+
+## 2026-02-26 Mobile Audio Bridge Hardening + Debug Overlay
+- Implemented gesture-stack audio unlock hardening in `/Users/doyoulovez/Documents/dangdangpang/utils/audio.ts`:
+  - `forceUnlockFromUserGesture(reason)` performs create+resume+short pulse in the direct user-input call stack (no `await` in handler path).
+  - Added debug state publishing via `window.__DANGDANG_SOUND_DEBUG__` and `dangdang:sound-debug` custom event.
+  - Added lifecycle resume handlers for `visibilitychange`, `pageshow`, `focus`, and `pagehide` recovery.
+  - Enforced RN WebView mode to never create `AudioContext`; WebView path now only posts `PLAY_SOUND` to native.
+- Added mobile-visible sound debug overlay in `/Users/doyoulovez/Documents/dangdangpang/App.tsx`:
+  - Shows mode, context state, unlock status, last resume result/time, and last error.
+  - Added unlock listeners that call `sound.forceUnlockFromUserGesture()` directly from gesture handlers.
+- Added RN-side bridge/audio diagnostics in `/Users/doyoulovez/Documents/dangdangpang/mobile/App.tsx`:
+  - logs raw onMessage payload receipt/parsing,
+  - logs per-sound preload start/success/failure,
+  - logs replay request + success/failure + missing-preload cases.
+- Updated `/Users/doyoulovez/Documents/dangdangpang/services/contracts.ts` with `SoundDebugState` and optional debug APIs on `SoundService`.
+- Validation:
+  - `npm run build` passed.
+  - `cd mobile && npx tsc --noEmit` passed.
