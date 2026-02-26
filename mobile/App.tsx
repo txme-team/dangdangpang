@@ -52,13 +52,13 @@ try {
 }
 
 const SOUND_ASSETS: Record<NativeSoundName, number> = {
-  select: require('./assets/sfx/select.wav'),
-  match: require('./assets/sfx/match.wav'),
-  store: require('./assets/sfx/store.wav'),
-  error: require('./assets/sfx/error.wav'),
-  gameover: require('./assets/sfx/gameover.wav'),
-  levelcomplete: require('./assets/sfx/levelcomplete.wav'),
-  ending: require('./assets/sfx/ending.wav'),
+  select: require('./assets/sfx/select.mp3'),
+  match: require('./assets/sfx/match.mp3'),
+  store: require('./assets/sfx/store.mp3'),
+  error: require('./assets/sfx/error.mp3'),
+  gameover: require('./assets/sfx/gameover.mp3'),
+  levelcomplete: require('./assets/sfx/levelcomplete.mp3'),
+  ending: require('./assets/sfx/ending.mp3'),
 };
 
 const isNativeSoundName = (value: unknown): value is NativeSoundName => {
