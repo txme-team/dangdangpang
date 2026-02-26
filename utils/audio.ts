@@ -61,6 +61,7 @@ class WebSoundManager implements SoundService {
   };
   private htmlPoolReady = false;
   private htmlPoolWarmedUp = false;
+  private htmlDeferredPlayLock: Partial<Record<SoundEvent, boolean>> = {};
 
   private iosBufferCtx: AudioContext | null = null;
   private iosBufferCache: Partial<Record<SoundEvent, AudioBuffer>> = {};
@@ -442,6 +443,21 @@ class WebSoundManager implements SoundService {
     this.htmlBusyUntil.set(audio, requestAt + holdMs);
     audio.volume = this.getEffectiveVolume();
     audio.muted = this.isMuted && !this.forceMasterGain;
+
+    if (audio.readyState < 2) {
+      this.deferHtmlSoundUntilReady(event, audio, allowRetry);
+      this.updateDebug({
+        lastPlay: {
+          ok: false,
+          at: Date.now(),
+          backend: 'html5-audio',
+          sound: event,
+          message: `pool#${index} deferred (readyState=${audio.readyState})`,
+        },
+      });
+      return;
+    }
+
     try {
       try {
         if (audio.readyState > 0) {
@@ -529,6 +545,31 @@ class WebSoundManager implements SoundService {
       if (allowRetry) {
         window.setTimeout(() => this.playHtmlSound(event, false), 90);
       }
+    }
+  }
+
+  private deferHtmlSoundUntilReady(event: SoundEvent, audio: HTMLAudioElement, allowRetry: boolean) {
+    if (this.htmlDeferredPlayLock[event]) return;
+    this.htmlDeferredPlayLock[event] = true;
+    const release = () => {
+      this.htmlDeferredPlayLock[event] = false;
+    };
+
+    const onReady = () => {
+      release();
+      this.playHtmlSound(event, false);
+    };
+    const onTimeout = () => {
+      release();
+      if (allowRetry) this.playHtmlSound(event, false);
+    };
+
+    audio.addEventListener('canplay', onReady, { once: true });
+    window.setTimeout(onTimeout, 180);
+    try {
+      audio.load();
+    } catch {
+      // No-op
     }
   }
 
