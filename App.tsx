@@ -253,8 +253,6 @@ const GameApp: React.FC = () => {
   const handleTileClick = (clickedTile: TileData) => {
     if (!gameState.isPlaying || gameState.isGameOver || connectionPath || secondSelectedTile || isPaused || isLoadingAd || isShuffling || adConfirmType) return; 
 
-    sound.playSelect();
-
     if (!selectedTile) {
       setSelectedTile(clickedTile);
       setErrorTile(null);
