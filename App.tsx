@@ -456,6 +456,16 @@ const GameApp: React.FC = () => {
     }
   };
 
+  const handleRestartFromModal = () => {
+    sound.playSelect();
+    restartGame();
+  };
+
+  const handleNextFromModal = () => {
+    sound.playSelect();
+    nextLevel();
+  };
+
   const togglePause = () => {
     if (!gameState.isPlaying || gameState.isGameOver || gameState.isLevelComplete || isLoadingAd || isShuffling || !!adConfirmType) {
       return;
@@ -626,6 +636,7 @@ const GameApp: React.FC = () => {
       {showHelp && (
         <HelpModal onClose={() => {
             sound.init();
+            sound.playSelect();
             try {
               window.history.pushState({ page: 'game' }, '', '');
             } catch (error) {
@@ -650,7 +661,7 @@ const GameApp: React.FC = () => {
       {gameState.isGameOver && (
           <GameOverModal 
             score={gameState.score} 
-            onRestart={restartGame} 
+            onRestart={handleRestartFromModal} 
           />
       )}
 
@@ -658,14 +669,14 @@ const GameApp: React.FC = () => {
           gameState.level >= MAX_LEVEL ? (
              <GameCompleteModal 
                 score={gameState.score} 
-                onRestart={restartGame} 
+                onRestart={handleRestartFromModal} 
                 rankings={rankings}
              />
           ) : (
              <LevelCompleteModal 
                 score={gameState.score} 
                 level={gameState.level} 
-                onNext={nextLevel} 
+                onNext={handleNextFromModal} 
                 rankings={rankings}
              />
           )
