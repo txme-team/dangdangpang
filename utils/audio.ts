@@ -40,16 +40,6 @@ class WebSoundManager implements SoundService {
   private rmsTimer: number | null = null;
 
   private htmlAudioPools: Partial<Record<SoundEvent, HTMLAudioElement[]>> = {};
-  private htmlBusyUntil = new WeakMap<HTMLAudioElement, number>();
-  private readonly htmlSoundDurationMs: Record<SoundEvent, number> = {
-    select: 120,
-    match: 320,
-    store: 260,
-    error: 260,
-    gameover: 900,
-    levelcomplete: 900,
-    ending: 1400,
-  };
   private htmlPoolCursor: Record<SoundEvent, number> = {
     select: 0,
     match: 0,
@@ -438,12 +428,15 @@ class WebSoundManager implements SoundService {
 
     const audio = this.pickHtmlAudioInstance(event, pool);
     const index = pool.indexOf(audio);
-    const holdMs = this.htmlSoundDurationMs[event] ?? 300;
-    this.htmlBusyUntil.set(audio, requestAt + holdMs);
     audio.volume = this.getEffectiveVolume();
     audio.muted = this.isMuted && !this.forceMasterGain;
 
     try {
+      // iOS Safari can leave elements in a pseudo-playing silent state.
+      // Always hard-reset before replaying.
+      if (!audio.paused && !audio.ended) {
+        audio.pause();
+      }
       try {
         if (audio.readyState > 0) {
           audio.currentTime = 0;
@@ -456,7 +449,7 @@ class WebSoundManager implements SoundService {
         console.log(`[SFX-LATENCY] html5 ${event} playing in ${latency.toFixed(1)}ms (pool#${index})`);
       };
       const onEnded = () => {
-        this.htmlBusyUntil.set(audio, performance.now());
+        // no-op
       };
       audio.addEventListener('playing', onPlaying, { once: true });
       audio.addEventListener('ended', onEnded, { once: true });
@@ -477,7 +470,7 @@ class WebSoundManager implements SoundService {
             const isCritical = event === 'gameover' || event === 'levelcomplete' || event === 'ending';
             if (isCritical && allowRetry) {
               window.setTimeout(() => {
-                const noProgress = audio.currentTime < 0.02 && (audio.paused || !audio.ended);
+                const noProgress = audio.currentTime < 0.02 && audio.paused;
                 if (noProgress) {
                   this.playHtmlSound(event, false);
                 }
@@ -486,7 +479,6 @@ class WebSoundManager implements SoundService {
           })
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
-            this.htmlBusyUntil.set(audio, performance.now());
             console.warn(`[SFX-PLAY] html5 reject ${event} pool#${index}: ${message}`);
             this.updateDebug({
               lastPlay: {
@@ -515,7 +507,6 @@ class WebSoundManager implements SoundService {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      this.htmlBusyUntil.set(audio, performance.now());
       console.warn(`[SFX-PLAY] html5 exception ${event} pool#${index}: ${message}`);
       this.updateDebug({
         lastPlay: {
@@ -556,31 +547,33 @@ class WebSoundManager implements SoundService {
   }
 
   private pickHtmlAudioInstance(sound: SoundEvent, pool: HTMLAudioElement[]) {
-    const now = performance.now();
-    const readyFree = pool.find(
-      (audio) => audio.readyState >= 2 && (audio.paused || audio.ended) && (this.htmlBusyUntil.get(audio) ?? 0) <= now
-    );
-    if (readyFree) return readyFree;
+    const size = pool.length;
+    const start = this.htmlPoolCursor[sound] % size;
 
-    const readyAny = pool.find((audio) => audio.readyState >= 2 && (this.htmlBusyUntil.get(audio) ?? 0) <= now);
-    if (readyAny) return readyAny;
-
-    const free = pool.find((audio) => (audio.paused || audio.ended) && (this.htmlBusyUntil.get(audio) ?? 0) <= now);
-    if (free) return free;
-
-    let picked = pool[0];
-    let minBusyUntil = this.htmlBusyUntil.get(picked) ?? 0;
-    for (const candidate of pool) {
-      const until = this.htmlBusyUntil.get(candidate) ?? 0;
-      if (until < minBusyUntil) {
-        picked = candidate;
-        minBusyUntil = until;
+    // 1) Prefer idle+ready entries to avoid cutting currently playing sounds.
+    for (let i = 0; i < size; i++) {
+      const idx = (start + i) % size;
+      const candidate = pool[idx];
+      if (candidate.readyState >= 2 && (candidate.paused || candidate.ended)) {
+        this.htmlPoolCursor[sound] = (idx + 1) % size;
+        return candidate;
       }
     }
 
-    const index = pool.indexOf(picked);
-    this.htmlPoolCursor[sound] = ((index >= 0 ? index : 0) + 1) % pool.length;
-    return picked;
+    // 2) If no ready idle entry, still prefer any idle entry.
+    for (let i = 0; i < size; i++) {
+      const idx = (start + i) % size;
+      const candidate = pool[idx];
+      if (candidate.paused || candidate.ended) {
+        this.htmlPoolCursor[sound] = (idx + 1) % size;
+        return candidate;
+      }
+    }
+
+    // 3) Fallback: all entries busy, use round-robin slot.
+    const fallback = pool[start];
+    this.htmlPoolCursor[sound] = (start + 1) % size;
+    return fallback;
   }
 
   private warmupHtmlAudioPools() {
