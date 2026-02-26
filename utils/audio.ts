@@ -6,6 +6,8 @@ declare global {
       postMessage?: (data: string) => void;
     };
     __DANGDANG_SOUND_DEBUG__?: SoundDebugState;
+    __DANGDANG_AUDIO_TRACE__?: Array<{ at: number; tag: string; detail?: string }>;
+    __DANGDANG_DUMP_AUDIO_TRACE__?: () => Array<{ at: number; tag: string; detail?: string }>;
   }
 }
 
@@ -13,6 +15,7 @@ type SoundEvent = 'select' | 'match' | 'store' | 'error' | 'gameover' | 'levelco
 type AudioBackend = 'web-audio' | 'html5-audio' | 'rn-bridge';
 
 const MUTE_STORAGE_KEY = 'dangdangpang:isMuted';
+const AUDIO_TRACE_STORAGE_KEY = 'dangdangpang:audio_trace';
 const HTML_POOL_SIZE = 8;
 const HTML_AUDIO_VERSION = '20260226-1';
 const HTML_AUDIO_SRC: Record<SoundEvent, string> = {
@@ -50,11 +53,13 @@ class WebSoundManager implements SoundService {
   };
   private htmlPoolReady = false;
   private htmlPoolWarmedUp = false;
+  private traceEnabled = false;
 
   constructor() {
     this.storedMutedValue = this.readStoredMuted();
     this.isMuted = this.storedMutedValue === 'true';
     this.backend = this.detectBackend();
+    this.traceEnabled = this.isTraceEnabled();
     this.debug = {
       mode: this.backend,
       contextState: 'none',
@@ -77,9 +82,11 @@ class WebSoundManager implements SoundService {
       this.attachLifecycleResumeHandlers();
     }
     this.publishDebug();
+    this.trace('construct', `backend=${this.backend} muted=${this.isMuted}`);
   }
 
   init() {
+    this.trace('init', `backend=${this.backend}`);
     if (this.backend === 'rn-bridge') return;
     if (this.backend === 'html5-audio') {
       this.ensureHtmlAudioPools();
@@ -89,12 +96,14 @@ class WebSoundManager implements SoundService {
         unlocked: true,
         lastResume: { ok: true, at: Date.now(), reason: 'html5-init' },
       });
+      this.trace('init-html5', 'warmup done');
       return;
     }
     this.forceUnlockFromUserGesture('init');
   }
 
   resume() {
+    this.trace('resume', `backend=${this.backend}`);
     if (this.backend === 'rn-bridge') return;
     if (this.backend === 'html5-audio') {
       this.updateDebug({
@@ -363,6 +372,7 @@ class WebSoundManager implements SoundService {
 
   private playSound(event: SoundEvent, webAudioAction: (ctx: AudioContext) => void) {
     if (this.isMuted && !this.forceMasterGain) return;
+    this.trace('play-request', `event=${event} backend=${this.backend} muted=${this.isMuted}`);
 
     if (this.backend === 'rn-bridge') {
       this.sendNativeSound(event);
@@ -401,6 +411,7 @@ class WebSoundManager implements SoundService {
     this.ensureHtmlAudioPools();
     const pool = this.htmlAudioPools[event];
     if (!pool || pool.length === 0) {
+      this.trace('html-pool-missing', `event=${event}`);
       this.updateDebug({
         lastPlay: {
           ok: false,
@@ -416,6 +427,10 @@ class WebSoundManager implements SoundService {
 
     const audio = this.pickHtmlAudioInstance(event, pool);
     const index = pool.indexOf(audio);
+    this.trace(
+      'html-pick',
+      `event=${event} idx=${index} ready=${audio.readyState} paused=${audio.paused} ended=${audio.ended} t=${audio.currentTime.toFixed?.(3) ?? audio.currentTime}`
+    );
     audio.volume = this.getEffectiveVolume();
     audio.muted = this.isMuted && !this.forceMasterGain;
     try {
@@ -433,6 +448,7 @@ class WebSoundManager implements SoundService {
       if (promise && typeof promise.then === 'function') {
         void promise
           .then(() => {
+            this.trace('html-play-ok', `event=${event} idx=${index}`);
             this.updateDebug({
               lastPlay: {
                 ok: true,
@@ -446,6 +462,7 @@ class WebSoundManager implements SoundService {
           })
           .catch((error) => {
             const message = error instanceof Error ? error.message : String(error);
+            this.trace('html-play-reject', `event=${event} idx=${index} err=${message}`);
             this.updateDebug({
               lastPlay: {
                 ok: false,
@@ -457,10 +474,12 @@ class WebSoundManager implements SoundService {
               lastError: `html5 play rejected: ${message}`,
             });
             if (allowRetry) {
+              this.trace('html-retry', `event=${event} after=60ms`);
               window.setTimeout(() => this.playHtmlSound(event, false), 60);
             }
           });
       } else {
+        this.trace('html-play-start', `event=${event} idx=${index}`);
         this.updateDebug({
           lastPlay: {
             ok: true,
@@ -473,6 +492,7 @@ class WebSoundManager implements SoundService {
       }
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      this.trace('html-play-throw', `event=${event} idx=${index} err=${message}`);
       this.updateDebug({
         lastPlay: {
           ok: false,
@@ -484,6 +504,7 @@ class WebSoundManager implements SoundService {
         lastError: `html5 play exception: ${message}`,
       });
       if (allowRetry) {
+        this.trace('html-retry', `event=${event} after=60ms (throw)`);
         window.setTimeout(() => this.playHtmlSound(event, false), 60);
       }
     }
@@ -491,6 +512,7 @@ class WebSoundManager implements SoundService {
 
   private ensureHtmlAudioPools() {
     if (this.backend !== 'html5-audio' || this.htmlPoolReady || typeof window === 'undefined') return;
+    this.trace('html-pool-init', `size=${HTML_POOL_SIZE}`);
     (Object.keys(HTML_AUDIO_SRC) as SoundEvent[]).forEach((sound) => {
       this.htmlAudioPools[sound] = Array.from({ length: HTML_POOL_SIZE }).map(() => {
         const audio = new Audio(HTML_AUDIO_SRC[sound]);
@@ -503,6 +525,7 @@ class WebSoundManager implements SoundService {
       });
     });
     this.htmlPoolReady = true;
+    this.trace('html-pool-ready');
     this.updateDebug({
       masterGain: this.getEffectiveVolume(),
       muted: this.isMuted,
@@ -518,6 +541,7 @@ class WebSoundManager implements SoundService {
       const idx = (start + i) % pool.length;
       const candidate = pool[idx];
       if ((candidate.paused || candidate.ended) && candidate.readyState >= 2) {
+        this.trace('pick-idle-ready', `sound=${sound} idx=${idx}`);
         this.htmlPoolCursor[sound] = (idx + 1) % pool.length;
         return candidate;
       }
@@ -527,12 +551,14 @@ class WebSoundManager implements SoundService {
       const idx = (start + i) % pool.length;
       const candidate = pool[idx];
       if (candidate.paused || candidate.ended) {
+        this.trace('pick-idle', `sound=${sound} idx=${idx} ready=${candidate.readyState}`);
         this.htmlPoolCursor[sound] = (idx + 1) % pool.length;
         return candidate;
       }
     }
 
     const fallback = pool[start];
+    this.trace('pick-fallback', `sound=${sound} idx=${start} ready=${fallback.readyState}`);
     this.htmlPoolCursor[sound] = (start + 1) % pool.length;
     return fallback;
   }
@@ -540,6 +566,7 @@ class WebSoundManager implements SoundService {
   private warmupHtmlAudioPools() {
     if (this.backend !== 'html5-audio' || this.htmlPoolWarmedUp) return;
     this.htmlPoolWarmedUp = true;
+    this.trace('warmup-start');
     (Object.keys(HTML_AUDIO_SRC) as SoundEvent[]).forEach((sound) => {
       const primer = new Audio(HTML_AUDIO_SRC[sound]);
       primer.preload = 'auto';
@@ -551,15 +578,18 @@ class WebSoundManager implements SoundService {
         if (p && typeof p.then === 'function') {
           void p
             .then(() => {
+              this.trace('warmup-ok', sound);
               primer.pause();
               primer.currentTime = 0;
               primer.src = '';
             })
             .catch(() => {
+              this.trace('warmup-reject', sound);
               primer.src = '';
             });
         }
       } catch {
+        this.trace('warmup-throw', sound);
         primer.src = '';
       }
     });
@@ -737,6 +767,32 @@ class WebSoundManager implements SoundService {
     const isMacTouch = /Macintosh/i.test(ua) && typeof navigator !== 'undefined' && navigator.maxTouchPoints > 1;
     if (isiOS || isMacTouch) return 'html5-audio';
     return 'web-audio';
+  }
+
+  private isTraceEnabled() {
+    if (typeof window === 'undefined') return false;
+    try {
+      const q = new URLSearchParams(window.location.search);
+      if (q.get('audioTrace') === '1') return true;
+      return window.localStorage.getItem(AUDIO_TRACE_STORAGE_KEY) === 'true';
+    } catch {
+      return false;
+    }
+  }
+
+  private trace(tag: string, detail?: string) {
+    if (typeof window === 'undefined' || !this.traceEnabled) return;
+    const entry = { at: Date.now(), tag, detail };
+    const prev = window.__DANGDANG_AUDIO_TRACE__ ?? [];
+    const next = [...prev, entry].slice(-120);
+    window.__DANGDANG_AUDIO_TRACE__ = next;
+    window.__DANGDANG_DUMP_AUDIO_TRACE__ = () => [...(window.__DANGDANG_AUDIO_TRACE__ ?? [])];
+    try {
+      // eslint-disable-next-line no-console
+      console.log('[DDP-AUDIO-TRACE]', entry);
+    } catch {
+      // no-op
+    }
   }
 
   private sendNativeSound(event: SoundEvent) {
