@@ -23,20 +23,19 @@ import {
   BOARD_COLS,
   BOARD_ROWS
 } from './constants';
-import { ShuffleIcon, HintIcon, SoundOnIcon, SoundOffIcon, VideoIcon, PauseIcon, PlayIcon, ClockIcon, StarIcon, CoinIcon } from './components/Icons';
+import { ShuffleIcon, HintIcon, SoundOnIcon, SoundOffIcon, PauseIcon, PlayIcon, ClockIcon, StarIcon, CoinIcon } from './components/Icons';
 
 import Board from './components/Board';
 import { 
   GameOverModal, 
   LevelCompleteModal, 
   GameCompleteModal, 
-  HelpModal,
-  AdConfirmModal
+  HelpModal
 } from './components/Modals';
 
 // Separated Game Component to use Auth Context
 const GameApp: React.FC = () => {
-  const { sound, userData, ads } = platformServices;
+  const { sound, userData } = platformServices;
   const { user, logout } = useAuth(); // Get logged in user and logout function
   
   const [gameState, setGameState] = useState<GameState>({
@@ -57,11 +56,7 @@ const GameApp: React.FC = () => {
   const [showHelp, setShowHelp] = useState(true);
   const [isPaused, setIsPaused] = useState(false);
   const [isMuted, setIsMuted] = useState(false);
-  const [isLoadingAd, setIsLoadingAd] = useState(false);
   const [isShuffling, setIsShuffling] = useState(false);
-  
-  // Ad Confirmation State
-  const [adConfirmType, setAdConfirmType] = useState<'hint' | 'shuffle' | null>(null);
 
   // Bonus System State
   const [combo, setCombo] = useState(0);
@@ -73,11 +68,6 @@ const GameApp: React.FC = () => {
 
   // Ranking State for Modals
   const [rankings, setRankings] = useState<RankingEntry[]>([]);
-
-  // Init Ads
-  useEffect(() => {
-    ads.init();
-  }, [ads]);
 
   useEffect(() => {
     const initialMute = sound.getDebugState?.().muted;
@@ -221,9 +211,8 @@ const GameApp: React.FC = () => {
       isLevelComplete: gameState.isLevelComplete,
       showHelp,
       showSettings: isPaused,
-      isLoadingAd,
       isShuffling,
-      hasAdConfirm: !!adConfirmType,
+      hasAdConfirm: false,
     })) {
       timer = window.setInterval(async () => {
         setGameState(prev => {
@@ -235,7 +224,7 @@ const GameApp: React.FC = () => {
       }, 1000);
     }
     return () => clearInterval(timer);
-  }, [gameState.isPlaying, gameState.isGameOver, gameState.isLevelComplete, showHelp, isPaused, isLoadingAd, isShuffling, adConfirmType]);
+  }, [gameState.isPlaying, gameState.isGameOver, gameState.isLevelComplete, showHelp, isPaused, isShuffling]);
 
   // Game Over
   useEffect(() => {
@@ -255,7 +244,7 @@ const GameApp: React.FC = () => {
   // --- Logic ---
 
   const handleTileClick = (clickedTile: TileData) => {
-    if (!gameState.isPlaying || gameState.isGameOver || connectionPath || secondSelectedTile || isPaused || isLoadingAd || isShuffling || adConfirmType) return; 
+    if (!gameState.isPlaying || gameState.isGameOver || connectionPath || secondSelectedTile || isPaused || isShuffling) return; 
 
     if (!selectedTile) {
       setSelectedTile(clickedTile);
@@ -361,71 +350,32 @@ const GameApp: React.FC = () => {
     }, 500);
   };
 
-  // --- Ad Based Actions ---
+  // --- Item Actions (Ad hidden for this release) ---
 
   const handleHintClick = () => {
-    if (!gameState.isPlaying || isPaused || connectionPath || isLoadingAd || isShuffling) return;
+    if (!gameState.isPlaying || isPaused || connectionPath || isShuffling) return;
     sound.playSelect();
-    setAdConfirmType('hint');
+    const match = findAvailableMatch(board);
+    if (match) {
+      sound.playStoreSuccess();
+      setSelectedTile(match.tile1);
+      setSecondSelectedTile(match.tile2);
+      setTimeout(() => {
+        handleMatch(match.tile1, match.tile2, match.path);
+      }, 500);
+    }
   };
 
   const handleShuffleClick = () => {
-    if (!gameState.isPlaying || isPaused || connectionPath || isLoadingAd || isShuffling) return;
+    if (!gameState.isPlaying || isPaused || connectionPath || isShuffling) return;
     sound.playSelect();
-    setAdConfirmType('shuffle');
-  };
-
-  const handleAdConfirmed = async () => {
-    const type = adConfirmType;
-    setAdConfirmType(null); // Close modal
-    setIsLoadingAd(true);
-
-    // SAFETY: If ad fails silently, reset loading after 5s
-    const safetyTimer = setTimeout(() => {
-        setIsLoadingAd(false);
-    }, 5000);
-
-    ads.showRewardAd(
-      async () => {
-        // Success
-        clearTimeout(safetyTimer);
-        setIsLoadingAd(false);
-        
-        if (type === 'hint') {
-            const match = findAvailableMatch(board);
-            if (match) {
-                sound.playStoreSuccess();
-                setSelectedTile(match.tile1);
-                setSecondSelectedTile(match.tile2);
-                setTimeout(() => {
-                     handleMatch(match.tile1, match.tile2, match.path);
-                }, 500);
-            }
-        } else if (type === 'shuffle') {
-            // Start Shuffle Animation
-            setIsShuffling(true);
-            sound.playSelect(); 
-
-            setTimeout(() => {
-                sound.playStoreSuccess();
-                setBoard(prev => shuffleBoard(prev));
-                setIsShuffling(false);
-                addFloatingText("SHUFFLE!", "", 'combo');
-            }, 800);
-        }
-      },
-      () => {
-        // Dismissed/Failed
-        clearTimeout(safetyTimer);
-        setIsLoadingAd(false);
-        sound.playError();
-      }
-    );
-  };
-
-  const handleAdCancel = () => {
-    sound.playSelect();
-    setAdConfirmType(null);
+    setIsShuffling(true);
+    setTimeout(() => {
+      sound.playStoreSuccess();
+      setBoard(prev => shuffleBoard(prev));
+      setIsShuffling(false);
+      addFloatingText("SHUFFLE!", "", 'combo');
+    }, 800);
   };
 
   const handleLevelComplete = async (finalScore: number) => {
@@ -469,7 +419,7 @@ const GameApp: React.FC = () => {
   };
 
   const togglePause = () => {
-    if (!gameState.isPlaying || gameState.isGameOver || gameState.isLevelComplete || isLoadingAd || isShuffling || !!adConfirmType) {
+    if (!gameState.isPlaying || gameState.isGameOver || gameState.isLevelComplete || isShuffling) {
       return;
     }
     setIsPaused(prev => !prev);
@@ -487,7 +437,7 @@ const GameApp: React.FC = () => {
 
     window.addEventListener('keydown', handlePauseShortcut);
     return () => window.removeEventListener('keydown', handlePauseShortcut);
-  }, [gameState.isPlaying, gameState.isGameOver, gameState.isLevelComplete, isLoadingAd, isShuffling, adConfirmType]);
+  }, [gameState.isPlaying, gameState.isGameOver, gameState.isLevelComplete, isShuffling]);
 
   const toggleMute = () => {
     const muted = sound.toggleMute();
@@ -573,13 +523,6 @@ const GameApp: React.FC = () => {
                 </div>
             )}
             
-            {/* Loading Ad Overlay */}
-            {isLoadingAd && (
-                <div className="absolute inset-0 z-50 bg-black/60 backdrop-blur-sm flex flex-col items-center justify-center text-white">
-                    <div className="w-12 h-12 mb-4 animate-spin rounded-full border-4 border-white border-t-transparent"></div>
-                    <div className="font-medium text-lg">광고 불러오는 중...</div>
-                </div>
-            )}
         </div>
 
         {/* Bottom Controls */}
@@ -610,10 +553,6 @@ const GameApp: React.FC = () => {
               <div className="hidden sm:block w-6 h-6 sm:w-10 sm:h-10 shrink-0"><HintIcon /></div>
               <div className="flex items-center gap-1 leading-none min-w-0">
                  <span className="font-bold text-[11px] sm:text-sm whitespace-nowrap">HINT</span>
-                 <div className="flex items-center gap-1 text-[9px] sm:text-[10px] bg-black/20 px-1.5 sm:px-2 py-0.5 pixel-btn-corner-sm border border-white/20 shrink-0">
-                    <div className="w-3 h-3"><VideoIcon /></div>
-                    <span>AD</span>
-                 </div>
               </div>
            </button>
 
@@ -625,10 +564,6 @@ const GameApp: React.FC = () => {
               <div className="hidden sm:block w-6 h-6 sm:w-10 sm:h-10 shrink-0"><ShuffleIcon /></div>
               <div className="flex items-center gap-1 leading-none min-w-0">
                  <span className="font-bold text-[11px] sm:text-sm whitespace-nowrap">SHUFFLE</span>
-                 <div className="flex items-center gap-1 text-[9px] sm:text-[10px] bg-black/20 px-1.5 sm:px-2 py-0.5 pixel-btn-corner-sm border border-white/20 shrink-0">
-                    <div className="w-3 h-3"><VideoIcon /></div>
-                    <span>AD</span>
-                 </div>
               </div>
            </button>
         </div>
@@ -651,15 +586,6 @@ const GameApp: React.FC = () => {
         }} />
       )}
       
-      {/* Ad Confirmation Modal */}
-      {adConfirmType && (
-          <AdConfirmModal 
-              type={adConfirmType} 
-              onConfirm={handleAdConfirmed} 
-              onCancel={handleAdCancel} 
-          />
-      )}
-
       {gameState.isGameOver && (
           <GameOverModal 
             score={gameState.score} 

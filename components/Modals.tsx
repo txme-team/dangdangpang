@@ -230,7 +230,7 @@ export const HelpModal = ({ onClose }: { onClose: () => void }) => (
                 <span className="text-[#d07f2f]">보너스:</span> 매칭할 때마다 시간이 <span className="text-green-600">2초</span> 늘어납니다!
             </li>
             <li>
-                <span className="text-[#d07f2f]">아이템:</span> 힌트와 섞기는 광고를 보고 사용할 수 있어요.
+                <span className="text-[#d07f2f]">아이템:</span> 힌트와 섞기를 전략적으로 사용해보세요.
             </li>
         </ul>
     </div>
