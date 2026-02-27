@@ -91,6 +91,17 @@ const LoginScreen: React.FC = () => {
               >
                 {isLoading ? 'LOADING...' : 'PRESS START'}
               </button>
+
+              <a
+                href="/privacy/"
+                className="mt-5 text-center text-[12px] font-medium tracking-wide text-[#3f6d92] underline underline-offset-2 hover:text-[#1f4e7e] active:text-[#1f4e7e]"
+                onClick={() => {
+                  sound.init();
+                  sound.playSelect();
+                }}
+              >
+                개인정보처리방침
+              </a>
             </form>
           </div>
         </div>
